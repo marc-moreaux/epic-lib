@@ -5,6 +5,8 @@ from typing import Dict, Any, List, Iterator
 import pandas as pd
 from gulpio.adapters import AbstractDatasetAdapter
 from gulpio.utils import find_images_in_folder, resize_images
+from scipy.io import wavfile
+import cv2
 
 from epic_kitchens.labels import (
     VERB_CLASS_COL,
@@ -92,6 +94,7 @@ class EpicDatasetAdapter(AbstractDatasetAdapter):
             frames = list(resize_images(paths, self.frame_size))
             meta["frame_size"] = frames[0].shape
             meta["num_frames"] = len(frames)
+            meta["modality"] = 'rgb'
             result = {"meta": meta, "frames": frames, "id": meta[UID_COL]}
             yield result
 
@@ -118,7 +121,8 @@ class EpicDatasetAdapter(AbstractDatasetAdapter):
         return data
 
     def _segment_metadata_to_clip_id(self, meta):
-        clip_id = "{video_id}_{uid}_{narration}".format(
+        clip_id = "{video_id}_{uid}_{narration}"
+        clip_id = clip_id.format(
             video_id=meta[VIDEO_ID_COL],
             uid=meta[UID_COL],
             narration=meta[NARRATION_COL].lower().strip().replace(" ", "-"),
@@ -146,6 +150,7 @@ class EpicFlowDatasetAdapter(EpicDatasetAdapter):
 
             meta["frame_size"] = frames["u"][0].shape
             meta["num_frames"] = len(frames["u"])
+            meta["modality"] = "flow"
             result = {
                 "meta": meta,
                 "frames": list(_intersperse(frames["u"], frames["v"])),
@@ -169,6 +174,29 @@ class EpicFlowDatasetAdapter(EpicDatasetAdapter):
             if not len(paths[axis]) > 0:
                 raise MissingDataException("{} is not present".format(folder["u"]))
         return paths
+
+
+class EpicAudioDatasetAdapter(EpicDatasetAdapter):
+    """Gulp Dataset Adapter for Gulping audio extracted from the EPIC-KITCHENS dataset"""
+
+    def iter_data(self, slice_element=None):
+        slice_element = slice_element or slice(0, len(self))
+        for meta in self.meta_data[slice_element]:
+            clip_id = self._segment_metadata_to_clip_id(meta)
+            wav_path = os.path.join(
+                self.video_segment_dir,
+                meta[PARTICIPANT_ID_COL],
+                meta[VIDEO_ID_COL],
+                clip_id,
+                'audio0.wav'
+            )
+            with open(wav_path, 'rb') as f:
+                audio_rate, audio = wavfile.read(f)
+            meta["audio_rate"] = audio_rate
+            meta["audio_len"] = len(audio)
+            meta["modality"] = 'audio'
+            result = {"meta": meta, "frames": [audio], "id": meta[UID_COL]}
+            yield result
 
 
 def _intersperse(*lists):

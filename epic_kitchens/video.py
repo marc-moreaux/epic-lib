@@ -4,9 +4,11 @@ import re
 from abc import ABC
 from pathlib import Path
 
+import subprocess
 import numpy as np
 import pandas as pd
 from typing import Tuple, Iterator, List, Iterable
+import datetime as dt
 
 from epic_kitchens.labels import NARRATION_COL, START_TS_COL, STOP_TS_COL, VIDEO_ID_COL
 from epic_kitchens.time import timestamp_to_frame
@@ -67,6 +69,42 @@ class FlowModalityIterator(ModalityIterator):
     def _seconds_to_flow_frame_index(self, timestamp: str):
         rgb_frame_index = timestamp_to_frame(timestamp, self.rgb_fps)
         return int(np.ceil(rgb_frame_index / self.stride))
+
+
+class AudioModalityIterator(ModalityIterator):
+    """Iterator for Audio
+
+    Args:
+        step_size: milliseconds between two audio samples"""
+
+    def __init__(self, step_size=0):
+        self.step_size = dt.timedelta(milliseconds=step_size)
+
+    def audio_iterator(self, start: Timestamp, stop: Timestamp) -> Iterable[int]:
+        """Increments <start> by <step_size> until <stop>
+
+        yields a (start, stop) tupple as str. eg: 00:00:00.00"""
+        start = dt.datetime.strptime(start, '%H:%M:%S.%f')
+        stop = dt.datetime.strptime(stop, '%H:%M:%S.%f')
+        increment = start
+        
+        if self.step_size == dt.timedelta(milliseconds=0):
+            yield (self._to_str(start), self._to_str(stop))
+        else:
+            raise NotImplementedError
+            yield self._tupple_from_start(start)
+            while increment < stop:
+                increment = increment + self.step_size
+                yield self._tupple_from_start(increment)
+
+    def _to_str(self, datetime):
+        return datetime.strftime('%H:%M:%S.%f')
+
+    def _tupple_from_start(self, start_datetime):
+        """adds step_size to start and return (start, stop) as str"""
+        start = start_datetime
+        stop = start_datetime + self.step_size
+        return self._to_str(start), self._to_str(stop)
 
 
 def iterate_frame_dir(root: Path) -> Iterator[Tuple[Path, Path]]:
@@ -212,5 +250,79 @@ def _split_frames_by_segment(
                 last_target=last_frame_index - first_frame_index + 1,
             )
         )
+    finally:
+        os.close(segment_dir_fd)
+
+
+def split_audio(
+    modality_iterator: ModalityIterator,
+    frame_format: str,
+    video_annotations: pd.DataFrame,
+    segment_root_dir: Path,
+    video_dir: Path,
+    audio_rate: int,
+) -> None:
+    """Split frames from a single video file stored in ``video_dir`` into segment directories stored
+    in ``segment_root_dir``.
+
+    Args:
+        video_annotations: Dataframe containing rows only corresponding to video frames
+            stored in ``video_dir``
+        segment_root_dir: Directory to write split segments to
+        video_dir: Directory containing originial wav file
+        audio_rate: Desired audio rate of the output audio
+    """
+    assert frame_format.endswith('.wav')
+    for annotation in video_annotations.itertuples():
+        segment_dir_name = "{video_id}_{index}_{narration}".format(
+            index=annotation.Index,
+            video_id=getattr(annotation, VIDEO_ID_COL),
+            narration=get_narration(annotation).strip().lower().replace(" ", "-"),
+        )
+        segment_dir = segment_root_dir.joinpath(segment_dir_name)
+        segment_dir.mkdir(parents=True, exist_ok=True)
+        start_timestamp = getattr(annotation, START_TS_COL)
+        stop_timestamp = getattr(annotation, STOP_TS_COL)
+        subaudio_iterator = modality_iterator.audio_iterator(
+            start_timestamp, stop_timestamp
+        )
+
+        LOG.info(
+            "Linking {video_id} - {narration} - {start}--{stop}".format(
+                video_id=getattr(annotation, VIDEO_ID_COL),
+                narration=get_narration(annotation),
+                start=start_timestamp,
+                stop=stop_timestamp,
+            )
+        )
+        _split_audio_by_segment(
+            frame_format,
+            subaudio_iterator,
+            audio_rate,
+            segment_dir,
+            video_dir)
+
+
+def _split_audio_by_segment(
+    frame_format: str,
+    subaudio_iterator: AudioModalityIterator,
+    audio_rate: int,
+    segment_dir: Path,
+    wav_dir: Path,
+) -> None:
+    segment_dir_fd = os.open(str(segment_dir), os.O_RDONLY)
+    try:
+        for i, (start, stop) in enumerate(subaudio_iterator):
+            audio_file = wav_dir.joinpath('audio.wav')
+            segment_file = segment_dir.joinpath(frame_format.format(i))
+            cmd = 'ffmpeg -i {in_file} -ar {audio_rate} -ss {start} -to {stop} -y {out_file} '.format(
+                in_file=audio_file,
+                out_file=segment_file,
+                audio_rate=audio_rate,
+                start=start,
+                stop=stop
+            )
+            LOG.info(cmd)
+            subprocess.call(cmd, shell=True)
     finally:
         os.close(segment_dir_fd)

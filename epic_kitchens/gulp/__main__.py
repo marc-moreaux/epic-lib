@@ -24,7 +24,7 @@ parser.add_argument(
     type=Path,
     help="Path to the pickle or CSV file which contains the meta information about the dataset.",
 )
-parser.add_argument("modality", choices=["flow", "rgb"])
+parser.add_argument("modality", choices=["flow", "rgb", "audio"])
 parser.add_argument(
     "--extension",
     type=str,
@@ -71,10 +71,21 @@ def main(args):
             args.extension,
             labelled=args.labelled,
         )
+    elif args.modality.lower() == "audio":
+        epic_adapter = adapter.EpicAudioDatasetAdapter(
+            str(args.in_folder),
+            labels,
+            args.frame_size,
+            args.extension,
+            labelled=args.labelled,
+        )
     else:
         raise ValueError("Modality '{}' not supported".format(args.modality))
     ingestor = GulpIngestor(
-        epic_adapter, str(args.out_folder), args.segments_per_chunk, args.num_workers
+        epic_adapter,
+        str(args.out_folder),
+        args.segments_per_chunk,
+        args.num_workers
     )
     ingestor()
 

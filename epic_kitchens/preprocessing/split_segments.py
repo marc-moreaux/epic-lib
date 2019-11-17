@@ -16,7 +16,9 @@ from epic_kitchens.video import (
     ModalityIterator,
     FlowModalityIterator,
     RGBModalityIterator,
+    AudioModalityIterator,
     split_video_frames,
+    split_audio,
 )
 
 HELP = """\
@@ -47,6 +49,7 @@ If segmenting optical flow then frames are contained in a `u` or `v` subdirector
 """
 
 LOG = logging.getLogger(__name__)
+LOG.setLevel(logging.DEBUG)
 
 
 parser = argparse.ArgumentParser(
@@ -56,8 +59,8 @@ parser.add_argument("video", type=str, help="Video ID to segment")
 parser.add_argument(
     "frame_dir",
     type=lambda p: pathlib.Path(p).absolute(),
-    help="Path to frames, if RGB should contain images, if flow, should contain u, "
-    "v subdirectories with images",
+    help="Path to frames, if RGB should contain images; if flow, should contain u, "
+    "v subdirectories with images; if audio, should be the wav file dir",
 )
 parser.add_argument(
     "links_dir",
@@ -73,7 +76,7 @@ parser.add_argument(
     "modality",
     type=str.lower,
     default="rgb",
-    choices=["rgb", "flow"],
+    choices=["rgb", "flow", "audio"],
     help="Modality of frames that are being segmented",
 )
 parser.add_argument(
@@ -101,6 +104,12 @@ parser.add_argument(
     help="Optical flow dilation parameter used for frame extraction "
     "(default: %(default)s)",
 )
+parser.add_argument(
+    "--audio_rate",
+    type=int,
+    default=44100,
+    help="Frequency of the audio (default: %(default)Hz)",
+)
 
 
 def main(args):
@@ -121,6 +130,7 @@ def main(args):
         frame_dirs = [args.frame_dir]
         links_dirs = [args.links_dir]
         modality = RGBModalityIterator(fps=fps)  # type: ModalityIterator
+        split_modality = split_video_frames
     elif args.modality.lower() == "flow":
         axes = ["u", "v"]
         frame_dirs = [args.frame_dir.joinpath(axis) for axis in axes]
@@ -128,14 +138,33 @@ def main(args):
         modality = FlowModalityIterator(
             rgb_fps=fps, stride=int(args.of_stride), dilation=int(args.of_dilation)
         )
+        split_modality = split_video_frames
+    elif args.modality.lower() == "audio":
+        frame_dirs = [args.frame_dir]
+        links_dirs = [args.links_dir]
+        split_modality = split_audio
+        modality = AudioModalityIterator(step_size=fps)
     else:
         raise ValueError("Modality '{}' is not recognised".format(args.modality))
 
     video_annotations = annotations[annotations[VIDEO_ID_COL] == args.video]
     for frame_dir, links_dir in zip(frame_dirs, links_dirs):
-        split_video_frames(
-            modality, args.frame_format, video_annotations, links_dir, frame_dir
-        )
+        if args.modality.lower() in ["rgb", "flow"]:
+            split_video_frames(
+                modality_iterator=modality,
+                frame_format=args.frame_format,
+                video_annotations=video_annotations,
+                segment_root_dir=links_dir,
+                video_dir=frame_dir,
+                audio_rate=args.audio_rate)
+        else:
+            split_audio(
+                modality_iterator=modality,
+                frame_format=args.frame_format,
+                video_annotations=video_annotations,
+                segment_root_dir=links_dir,
+                video_dir=frame_dir,
+                audio_rate=args.audio_rate)
 
 
 if __name__ == "__main__":
