@@ -194,6 +194,8 @@ class EpicAudioDatasetAdapter(EpicDatasetAdapter):
                 audio_rate, audio = wavfile.read(f)
             meta["audio_rate"] = audio_rate
             meta["audio_len"] = len(audio)
+            meta["audio_shape"] = audio.shape
+            meta["audio_dtype"] = audio.dtype
             meta["modality"] = 'audio'
             result = {"meta": meta, "frames": [audio], "id": meta[UID_COL]}
             yield result

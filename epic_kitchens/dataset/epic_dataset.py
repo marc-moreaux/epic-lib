@@ -236,4 +236,23 @@ class EpicVideoFlowDataset(EpicVideoDataset):
             PIL.Image.fromarray(numpy_frame).convert("L")
             for numpy_frame in numpy_frames
         ]
-        return frames
+
+
+class EpicAudioDataset(EpicVideoDataset):
+    """VideoDataset for loading gulped audio. 
+    """
+    def load_audio(
+        self, segment: VideoSegment,
+    ) -> np.array:
+        """
+        Load audio from gulp directory.
+
+        Args:
+            segment: Video segment to load
+
+        Returns:
+            Frames indexed by ``indices`` from the ``segment``.
+
+        """
+        audio = self.gulp_dir[segment.id]
+        return audio
